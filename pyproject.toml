@@ -1,0 +1,28 @@
+[project]
+name = "pipelines-watch"
+version = "0.1.0"
+description = "Watch GitLab CI failures via Prometheus and retry the ones an LLM judges transient."
+requires-python = ">=3.10"
+dependencies = [
+    "python-gitlab",
+    "prometheus-api-client",
+    "prometheus-client",
+    "langchain",
+    "langchain-chroma",
+    "langchain-openai",
+    "pydantic-settings",
+    "aiolimiter",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+pipelines-watch = "pipelines_watch.cli:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
