@@ -10,8 +10,11 @@ dependencies = [
     "langchain",
     "langchain-chroma",
     "langchain-openai",
+    "langchain-ollama",
+    "langchain-anthropic",
     "pydantic-settings",
     "aiolimiter",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]

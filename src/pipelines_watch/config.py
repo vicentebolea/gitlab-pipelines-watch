@@ -11,8 +11,9 @@ class Settings(BaseSettings):
     prometheus_url: str = "http://rigel:9090"
 
     # LLM and embeddings, resolved by langchain init_chat_model / init_embeddings.
-    llm_model: str = "openai:gemini-2.0-flash"
-    embedding_model: str = "openai:text-embedding-3-small"
+    llm_model: str = "anthropic:claude-sonnet-5-5"
+    extract_model: str = "anthropic:claude-haiku-5-5"
+    embedding_model: str = "ollama:nomic-embed-text"
 
     data_dir: str = "data"
     poll_interval: int = 60

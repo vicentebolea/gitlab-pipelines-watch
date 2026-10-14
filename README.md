@@ -59,57 +59,94 @@ PW_GITLAB_URL=https://gitlab.kitware.com
 PW_GITLAB_TOKEN=glpat-xxxx
 PW_PROMETHEUS_URL=http://rigel:9090
 
-# LLM and embeddings, written as provider:model
-PW_LLM_MODEL=openai:gemini-2.0-flash
-PW_EMBEDDING_MODEL=openai:text-embedding-3-small
+# LLMs, written as provider:model
+PW_LLM_MODEL=anthropic:claude-sonnet-5-5       # classifies failures
+PW_EXTRACT_MODEL=anthropic:claude-haiku-5-5    # extracts snippet and platform
+ANTHROPIC_API_KEY=sk-ant-xxxx
 
-# Used by the openai provider
-OPENAI_API_KEY=xxxx
-OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+# Embeddings run locally through ollama
+PW_EMBEDDING_MODEL=ollama:nomic-embed-text
 
-# Where the corpus and decision log live (default: ./data)
+# Where entries, the Chroma corpus and the decision log live (default: ./data)
 PW_DATA_DIR=data
 ```
 
-The embedding model must be one your endpoint actually serves. With the Gemini
-endpoint above, use `PW_EMBEDDING_MODEL=openai:gemini-embedding-001` (tested).
+Embeddings need a running ollama server with the model pulled
+(`ollama serve`, `ollama pull nomic-embed-text`); it uses the GPU if there is
+one. Any other langchain provider works too, for example
+`PW_EMBEDDING_MODEL=openai:text-embedding-3-small` with `OPENAI_API_KEY`.
 
 Tuning knobs (defaults in parentheses): `PW_CONCURRENCY` (8),
 `PW_GITLAB_RPS` (5, requests per second sent to GitLab),
 `PW_MAX_RETRIES_PER_JOB` (2), `PW_MIN_CONFIDENCE` (0.6), `PW_POLL_INTERVAL`
 (60 seconds). Lower `PW_GITLAB_RPS` if the instance is busy.
 
-## Step 1: build the corpus (offline)
+## Step 1: build the corpus (offline, two stages)
 
-The corpus is a Chroma database in `PW_DATA_DIR/chroma`. It is built from
-GitLab history, one project at a time:
+Stage 1 turns GitLab history into entry files. Stage 2 embeds them into Chroma.
+Keeping them apart lets you inspect and edit entries before they are indexed.
+
+### Stage 1: write entries
 
 ```sh
 .venv/bin/pipelines-watch backfill group/project --pipelines 200
 ```
 
-What this does: it reads the last 200 pipelines of the project, including
-retried attempts. For every `script_failure` job that was run again, it stores
-the log tail with a label:
+It reads the last 200 pipelines of the project, including retried attempts. For
+every `script_failure` job that was run again, the LLM extracts the error
+snippet and the platform, and one markdown file is written to
+`data/entries/group__project/<job_id>.md`:
 
-- `retry_passed`: the next attempt succeeded, so the failure was transient.
-- `retry_failed`: the next attempt failed too, so it was a real bug.
+```markdown
+---
+project: group/project
+job_id: 13516705
+platform: windows-vs2022
+error_type: artifact-upload
+outcome: retry_passed
+---
 
-Failures that were never retried are skipped.
+# artifact-upload on windows-vs2022: retry_passed
+
+Job `windows-vs2022-mpi-python-qt:build` (group/project). A retry of this job on this platform passed.
+
+(error snippet in a code block)
+```
+
+`outcome` is what the next attempt of the same job did: `retry_passed` (the
+failure was transient) or `retry_failed` (a real bug). Failures that were never
+retried are skipped. Timestamps, tokens and ids are scrubbed from snippets.
+
+Re-running is safe, existing entry files are skipped. Repeat with another
+project path to add more.
+
+### Review the entries
+
+They are plain markdown. Read them, fix a wrong platform or outcome, or delete
+bad ones.
+
+### Stage 2: load into Chroma
+
+```sh
+.venv/bin/pipelines-watch load
+```
+
+Each entry becomes one Chroma record. Only the snippet is embedded, so
+similarity depends on the error and not on the surrounding text. The whole
+markdown file is stored with the record, and the classifier shows the matching
+files to the LLM, which decides from those examples.
 
 Notes:
 
-- Run it once per project. Repeat the command with a different project path to
-  add more; re-running the same project is safe, entries are keyed by
-  `project:job_id`.
-- Check the result is big enough before going further. If few failures were
-  ever retried at the job level, the corpus will be small.
-- Run it with the watcher stopped, or build into a new directory
+- Entries already in Chroma are skipped. After editing a file that is already
+  loaded, delete the corpus (`rm -rf data/chroma`) and run `load` again, it is
+  cheap. Keep `data/state.db`, it holds the watcher's decision log.
+- Check the number of entries before going further. If few failures were ever
+  retried at the job level, the corpus will be small.
+- Stage 1 calls GitLab and the Anthropic API, so it can take a while on large
+  projects.
+- Run `load` with the watcher stopped, or build into a new directory
   (`PW_DATA_DIR=data-new`) and switch over afterwards.
-- To start over, delete the corpus only: `rm -rf data/chroma`. Keep
-  `data/state.db`, it holds the watcher's decision log and retry counts.
-- Backfill talks to GitLab and the embedding API, so it can take a while on
-  large projects.
 
 ## Step 2: run the watcher (online)
 

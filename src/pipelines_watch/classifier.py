@@ -5,14 +5,14 @@ from pydantic import BaseModel, Field
 SYSTEM = (
     "You are a CI expert. A GitLab CI job failed with script_failure. Decide whether the failure is "
     "transient (network, registry, runner resource exhaustion, known flaky test: worth retrying) or a "
-    "genuine code/configuration bug (not worth retrying). Past failures with their observed outcome "
-    "are given; weigh them heavily: 'retry_passed' means a retry succeeded, 'retry_failed' means it "
+    "genuine code/configuration bug (not worth retrying). Past failures with their job, platform and observed outcome "
+    "are given; the same error can be transient on one platform and a bug on another; weigh them heavily: 'retry_passed' means a retry succeeded, 'retry_failed' means it "
     "failed again."
 )
 
 PROMPT = ChatPromptTemplate.from_messages([
     ("system", SYSTEM),
-    ("human", "Similar past failures:\n{examples}\n\nJob: {job_name}\n\nLog tail:\n{log}"),
+    ("human", "Similar past failures:\n{examples}\n\nJob: {job_name} ({platform})\n\nError ({error_type}):\n{log}"),
 ])
 
 
@@ -23,10 +23,8 @@ class Decision(BaseModel):
 
 
 def build_chain(llm_model):
-    return PROMPT | init_chat_model(llm_model, temperature=0).with_structured_output(Decision)
+    return PROMPT | init_chat_model(llm_model).with_structured_output(Decision)
 
 
 def format_examples(docs):
-    return "\n---\n".join(
-        f"[{d.metadata['outcome']}] {d.metadata['job_name']}\n{d.page_content[-1500:]}" for d in docs
-    ) or "(none)"
+    return "\n\n".join(d.metadata["markdown"] for d in docs) or "(none)"

@@ -21,14 +21,17 @@ class Corpus:
             persist_directory=str(Path(data_dir) / "chroma"),
         )
 
-    def add(self, job_id, job_name, project, failure_reason, log, outcome):
-        """outcome: retry_passed | retry_failed."""
+    def has(self, entry_id):
+        return bool(self.store.get(ids=[entry_id])["ids"])
+
+    def add(self, e, markdown):
         self.store.add_documents(
             [Document(
-                page_content=log,
-                metadata=dict(job_name=job_name, project=project, failure_reason=failure_reason, outcome=outcome),
+                page_content=e.snippet,  # only the snippet is embedded
+                metadata=dict(job_name=e.job_name, platform=e.platform, error_type=e.error_type,
+                              project=e.project, outcome=e.outcome, markdown=markdown),
             )],
-            ids=[f"{project}:{job_id}"],
+            ids=[e.id],
         )
 
     def similar(self, log, k):

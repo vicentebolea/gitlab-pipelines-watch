@@ -98,35 +98,46 @@ A job is retried only when the decision is `retry`, confidence is at least
 
 ## Corpus lifecycle
 
-Corpus building is offline and separate from the watcher. The watcher only
-reads the corpus; `pipelines-watch backfill` is the only writer. This keeps the
-ingestion strategy (what to label, how much history, how to chunk and embed)
-free to change while it is still being explored. To try a new approach, point
-`PW_DATA_DIR` at a fresh directory and rebuild.
+Corpus building is offline, in two stages, and separate from the watcher. The
+watcher only reads the corpus. Entries are markdown files on disk first, so the
+extraction strategy can change and be reviewed before anything is embedded.
 
 ```mermaid
 flowchart TD
-    subgraph OFF[Offline: pipelines-watch backfill]
+    subgraph S1[Stage 1: pipelines-watch backfill]
         H[Recent pipelines<br/>jobs with include_retried] --> G[Group attempts by job name]
         G --> O1{Later attempt exists?}
         O1 -- passed --> R1[retry_passed]
         O1 -- failed --> R2[retry_failed]
         O1 -- none --> X[Skipped]
-        R1 --> E[Embed log tail]
-        R2 --> E
-        E --> V[(Chroma collection: failures)]
+        R1 --> HINT[Pick last error lines<br/>before Job failed]
+        R2 --> HINT
+        HINT --> EX[LLM: snippet, platform, error type]
+        EX --> SC[Scrub timestamps, tokens, ids]
+        SC --> MD[(data/entries/project/job_id.md)]
+    end
+
+    subgraph S2[Stage 2: pipelines-watch load]
+        MD --> EMB[Embed snippet only<br/>local ollama]
+        EMB --> V[(Chroma: snippet vector,<br/>full markdown in metadata)]
     end
 
     subgraph ON[Online: pipelines-watch watch]
-        V -. read-only similarity search .-> RET[Few-shot context for the classifier]
+        V -. read-only similarity search .-> RET[Matching markdown files<br/>as examples for the classifier]
     end
 ```
 
 Labels come only from what a retry actually did: `retry_passed` is strong
 evidence of a transient failure and `retry_failed` of a real bug. Failures that
-were never retried are skipped, since no one observed whether they were
-transient. The watcher records its own decisions in SQLite, but does not feed
-them back into the corpus; they can be mined later by an offline job.
+were never retried are skipped. The platform is part of every entry because the
+same error can be transient on one platform and a bug on another.
+
+The root-cause line is chosen by code (the last `ERROR` or `FATAL` lines before
+the runner's "Job failed"), then passed to the LLM as a hint, because asking the
+LLM to rank several errors gave inconsistent labels.
+
+The watcher records its own decisions in SQLite, but does not feed them back
+into the corpus; they can be mined later by an offline job.
 
 ## Scaling model
 
@@ -168,8 +179,9 @@ All settings are `PW_*` environment variables, defined in `config.py`:
 | `PW_GITLAB_URL` | `https://gitlab.kitware.com` | GitLab instance |
 | `PW_GITLAB_TOKEN` | required | Token with `api` scope |
 | `PW_PROMETHEUS_URL` | `http://rigel:9090` | Prometheus server |
-| `PW_LLM_MODEL` | `openai:gemini-2.0-flash` | `provider:model` for `init_chat_model` |
-| `PW_EMBEDDING_MODEL` | `openai:text-embedding-3-small` | `provider:model` for `init_embeddings` |
+| `PW_LLM_MODEL` | `anthropic:claude-sonnet-5-5` | Classifier, `provider:model` for `init_chat_model` |
+| `PW_EXTRACT_MODEL` | `anthropic:claude-haiku-5-5` | Snippet and platform extraction |
+| `PW_EMBEDDING_MODEL` | `ollama:nomic-embed-text` | `provider:model` for `init_embeddings` |
 | `PW_CONCURRENCY` | 8 | In-flight jobs |
 | `PW_GITLAB_RPS` | 5 | GitLab requests per second |
 | `PW_MAX_RETRIES_PER_JOB` | 2 | Per (pipeline, job name) |
@@ -186,8 +198,10 @@ All settings are `PW_*` environment variables, defined in `config.py`:
 | `classifier.py` | langchain prompt and structured `Decision` output |
 | `corpus.py` | `Corpus` (vector store, read-only for the watcher) and `State` (SQLite decisions) |
 | `watcher.py` | Poll loop and per-job decision flow |
-| `backfill.py` | Offline corpus builder from GitLab history |
-| `cli.py` | `watch` and `backfill` commands |
+| `backfill.py` | Stage 1 (entry files from GitLab history) and stage 2 (`load` into Chroma) |
+| `entries.py` | `Entry` model and its markdown files |
+| `extract.py` | LLM extraction of snippet, platform and error type; scrubbing |
+| `cli.py` | `watch`, `backfill` and `load` commands |
 
 ## Observability
 

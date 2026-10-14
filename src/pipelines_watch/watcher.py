@@ -6,6 +6,7 @@ from prometheus_client import Counter, start_http_server
 from . import prom
 from .classifier import build_chain, format_examples
 from .corpus import Corpus, State
+from .extract import build_extractor, scrub, terminal_errors
 from .gitlab import GitLab
 
 log = logging.getLogger(__name__)
@@ -19,14 +20,16 @@ class Watcher:
         self.corpus = Corpus(cfg.data_dir, cfg.embedding_model)
         self.state = State(cfg.data_dir)
         self.chain = build_chain(cfg.llm_model)
+        self.extractor = build_extractor(cfg.extract_model)
         self.sem = asyncio.Semaphore(cfg.concurrency)
 
     async def judge(self, job, name, text):
         """Return (retry, reason) for a script_failure job."""
-        docs = await asyncio.to_thread(self.corpus.similar, text, self.cfg.similar_k)
-        d = await self.chain.ainvoke(
-            {"examples": format_examples(docs), "job_name": name, "log": text}
-        )
+        x = await self.extractor.ainvoke({"job_name": name, "runner": "", "hint": terminal_errors(text), "log": text})
+        snippet = scrub(x.snippet)
+        docs = await asyncio.to_thread(self.corpus.similar, snippet, self.cfg.similar_k)
+        d = await self.chain.ainvoke({"examples": format_examples(docs), "job_name": name,
+                                      "platform": x.platform, "error_type": x.error_type, "log": snippet})
         return d.retry and d.confidence >= self.cfg.min_confidence, d.reason
 
     async def handle(self, project, job_id, name, reason):
