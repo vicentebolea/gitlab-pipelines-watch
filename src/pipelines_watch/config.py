@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     extract_model: str = "anthropic:claude-haiku-5-5"
     embedding_model: str = "ollama:nomic-embed-text"
 
-    data_dir: str = "data"
+    knowledge_dir: str = "knowledge"  # entries (committed) and chroma (built); shipped as an image
+    state_dir: str = "data"  # watcher decision log, never shipped
     poll_interval: int = 60
     concurrency: int = 8  # in-flight classifications/retries
     gitlab_rps: float = 5.0  # GitLab API requests per second, shared by all workers
@@ -23,4 +24,4 @@ class Settings(BaseSettings):
     similar_k: int = 4  # past failures shown to the LLM
     min_confidence: float = 0.6
     dry_run: bool = False
-    metrics_port: int = 9100
+    metrics_port: int = 9101  # 9100 is node_exporter

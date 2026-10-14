@@ -21,8 +21,10 @@ There are two separate steps:
 
 ### Exporter setup (once)
 
-Run the exporter next to Prometheus (for example on `rigel`) with job metrics
-enabled, and list the projects to watch:
+The `rigel-deploy` repo installs it on `rigel` and scrapes it (see its README).
+To run it yourself, enable job metrics, **enable merge request refs** (the
+exporter only follows `main` and `master` by default, but most retryable
+failures happen on merge request pipelines), and list the projects:
 
 ```yaml
 gitlab:
@@ -33,13 +35,17 @@ project_defaults:
     pipeline:
       jobs:
         enabled: true
+    refs:
+      merge_requests:
+        enabled: true
+        max_age_seconds: 21600
 projects:
   - name: group/project
 ```
 
 Then add the exporter as a scrape target in Prometheus (in `rigel-deploy`, the
 `prometheus_scrape_configs` in `site.yml`). The exporter listens on port 8080
-by default. The watcher itself also exposes its own metrics on port 9100, which
+by default. The watcher itself also exposes its own metrics on port 9101, which
 you can add as a second target.
 
 ## Install
@@ -67,8 +73,10 @@ ANTHROPIC_API_KEY=sk-ant-xxxx
 # Embeddings run locally through ollama
 PW_EMBEDDING_MODEL=ollama:nomic-embed-text
 
-# Where entries, the Chroma corpus and the decision log live (default: ./data)
-PW_DATA_DIR=data
+# Entries (committed) and the Chroma corpus (built), default ./knowledge
+PW_KNOWLEDGE_DIR=knowledge
+# The watcher's decision log, never shipped, default ./data
+PW_STATE_DIR=data
 ```
 
 Embeddings need a running ollama server with the model pulled
@@ -95,7 +103,7 @@ Keeping them apart lets you inspect and edit entries before they are indexed.
 It reads the last 200 pipelines of the project, including retried attempts. For
 every `script_failure` job that was run again, the LLM extracts the error
 snippet and the platform, and one markdown file is written to
-`data/entries/group__project/<job_id>.md`:
+`knowledge/entries/group__project/<job_id>.md`:
 
 ```markdown
 ---
@@ -139,14 +147,14 @@ files to the LLM, which decides from those examples.
 Notes:
 
 - Entries already in Chroma are skipped. After editing a file that is already
-  loaded, delete the corpus (`rm -rf data/chroma`) and run `load` again, it is
+  loaded, delete the corpus (`rm -rf knowledge/chroma`) and run `load` again, it is
   cheap. Keep `data/state.db`, it holds the watcher's decision log.
 - Check the number of entries before going further. If few failures were ever
   retried at the job level, the corpus will be small.
 - Stage 1 calls GitLab and the Anthropic API, so it can take a while on large
   projects.
 - Run `load` with the watcher stopped, or build into a new directory
-  (`PW_DATA_DIR=data-new`) and switch over afterwards.
+  (`PW_KNOWLEDGE_DIR=knowledge-new`) and switch over afterwards.
 
 ## Step 2: run the watcher (online)
 
@@ -190,10 +198,46 @@ journalctl -u pipelines-watch -f
 
 After building a new corpus, restart the service so it picks it up.
 
+## Container images (CI)
+
+CI (`.github/workflows/ci.yml`) builds two images with podman and pushes them
+to GitHub Container Registry on every push to `main` (tags: commit sha and
+`latest`; version tags `v*` are added for the app image):
+
+- `ghcr.io/vicentebolea/gitlab-pipelines-watch`: the app (inference). It does
+  not contain the corpus.
+- `ghcr.io/vicentebolea/vtk-pipelines-knowledge`: data only (`FROM scratch`),
+  with `knowledge/entries` (the markdown entries) and `knowledge/chroma` (the
+  database CI rebuilds from them with `nomic-embed-text`).
+
+To refresh the knowledge, run stage 1 locally, review, commit the new files in
+`knowledge/entries/`, and push. CI rebuilds Chroma and publishes the image.
+
+Run the app with the knowledge mounted from its image:
+
+```sh
+podman run -d --env-file .env \
+  --mount type=image,source=ghcr.io/vicentebolea/vtk-pipelines-knowledge,destination=/kb,rw=true \
+  -e PW_KNOWLEDGE_DIR=/kb/knowledge \
+  -v pw-state:/state -p 9101:9101 \
+  ghcr.io/vicentebolea/gitlab-pipelines-watch
+```
+
+Notes: the image root is mounted at `/kb`, so the corpus is under
+`/kb/knowledge`. `rw=true` is needed because Chroma writes to its database
+file, the changes are discarded with the container. The app still needs an
+embedding endpoint at runtime, the same model that built the database: set
+`OLLAMA_HOST` to a reachable ollama server with `nomic-embed-text` pulled.
+A `scratch` data image cannot be used as a `--volumes-from` data container,
+the volume stays empty.
+
+The packages are private by default (the repo is private). Log in with
+`podman login ghcr.io` using a token with `read:packages` to pull them.
+
 ## Check it works
 
 - Logs show one decision per failed job.
-- `curl localhost:9100/metrics | grep pw_decisions_total` shows counts of
+- `curl localhost:9101/metrics | grep pw_decisions_total` shows counts of
   `retry`, `skip` and `error` decisions.
 - Every decision is in `data/state.db` (table `decisions`):
   `sqlite3 data/state.db 'select * from decisions order by rowid desc limit 10'`.

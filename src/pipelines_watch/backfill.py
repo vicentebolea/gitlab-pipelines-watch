@@ -24,14 +24,14 @@ def backfill(cfg, project_path, pipelines=200):
             for i, j in enumerate(attempts[:-1]):  # the last attempt was never retried
                 if j.status != "failed" or j.failure_reason != "script_failure":
                     continue
-                if entries.exists(cfg.data_dir, project_path, j.id):
+                if entries.exists(cfg.knowledge_dir, project_path, j.id):
                     continue
                 outcome = "retry_passed" if attempts[i + 1].status == "success" else "retry_failed"
                 text = ANSI.sub("", project.jobs.get(j.id, lazy=True).trace().decode(errors="replace"))
                 runner = (getattr(j, "runner", None) or {}).get("description", "")
                 x = extractor.invoke({"job_name": name, "runner": runner,
                                            "hint": terminal_errors(text), "log": text[-LOG_TAIL_CHARS:]})
-                entries.save(cfg.data_dir, entries.Entry(
+                entries.save(cfg.knowledge_dir, entries.Entry(
                     project=project_path, job_id=j.id, pipeline_id=pipe.id, ref=pipe.ref, job_name=name,
                     platform=x.platform, error_type=x.error_type, snippet=scrub(x.snippet), outcome=outcome))
                 done += 1
@@ -40,9 +40,9 @@ def backfill(cfg, project_path, pipelines=200):
 
 def load(cfg):
     """Stage 2: embed the entry files into Chroma (skips ones already there)."""
-    corpus = Corpus(cfg.data_dir, cfg.embedding_model)
+    corpus = Corpus(cfg.knowledge_dir, cfg.embedding_model)
     done = 0
-    for e, md in entries.load_all(cfg.data_dir):
+    for e, md in entries.load_all(cfg.knowledge_dir):
         if not corpus.has(e.id):
             corpus.add(e, md)
             done += 1

@@ -3,7 +3,7 @@ from pipelines_watch.extract import scrub
 
 def test_scrub_removes_timestamps_and_secrets():
     raw = (
-        "2026-10-13T13:26:47.791816Z 01E ERROR: upload failed token=69_hzDvwF correlation_id=abc123 id=99 status=413   \n"
+        "2026-10-13T13:26:47.791816Z 01E ERROR: upload failed token=abc_FAKE1 correlation_id=abc123 id=99 status=413   \n"
         "2026-10-13T13:26:47.792155Z 01E FATAL: too large glpat-xxxx"
     )
     assert scrub(raw) == (

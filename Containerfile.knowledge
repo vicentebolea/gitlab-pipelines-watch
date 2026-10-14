@@ -1,0 +1,7 @@
+# Data-only image: the corpus and nothing else. Use it with an image mount:
+#   podman run --mount type=image,source=ghcr.io/<owner>/vtk-pipelines-knowledge,destination=/kb,rw=true \
+#     -e PW_KNOWLEDGE_DIR=/kb/knowledge ghcr.io/<owner>/gitlab-pipelines-watch
+FROM scratch
+
+COPY knowledge/entries /knowledge/entries
+COPY knowledge/chroma /knowledge/chroma

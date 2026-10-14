@@ -17,8 +17,8 @@ class Watcher:
     def __init__(self, cfg):
         self.cfg = cfg
         self.gl = GitLab(cfg.gitlab_url, cfg.gitlab_token, cfg.gitlab_rps)
-        self.corpus = Corpus(cfg.data_dir, cfg.embedding_model)
-        self.state = State(cfg.data_dir)
+        self.corpus = Corpus(cfg.knowledge_dir, cfg.embedding_model)
+        self.state = State(cfg.state_dir)
         self.chain = build_chain(cfg.llm_model)
         self.extractor = build_extractor(cfg.extract_model)
         self.sem = asyncio.Semaphore(cfg.concurrency)

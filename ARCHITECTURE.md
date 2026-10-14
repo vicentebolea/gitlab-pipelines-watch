@@ -35,7 +35,7 @@ flowchart LR
         CLS[classifier.py<br/>langchain chain]
         COR[(corpus.py<br/>Chroma vector store)]
         ST[(corpus.py State<br/>SQLite)]
-        MET[/metrics :9100/]
+        MET[/metrics :9101/]
     end
 
     GL -- pipelines and jobs API --> EXP
@@ -114,7 +114,7 @@ flowchart TD
         R2 --> HINT
         HINT --> EX[LLM: snippet, platform, error type]
         EX --> SC[Scrub timestamps, tokens, ids]
-        SC --> MD[(data/entries/project/job_id.md)]
+        SC --> MD[(knowledge/entries/project/job_id.md)]
     end
 
     subgraph S2[Stage 2: pipelines-watch load]
@@ -138,6 +138,29 @@ LLM to rank several errors gave inconsistent labels.
 
 The watcher records its own decisions in SQLite, but does not feed them back
 into the corpus; they can be mined later by an offline job.
+
+## Delivery
+
+```mermaid
+flowchart LR
+    DEV[Local: backfill, review] -- commit entries --> GIT[(GitHub repo<br/>knowledge/entries)]
+    GIT --> CI[GitHub Actions]
+    CI --> T[ruff and pytest]
+    T --> A[podman build Containerfile]
+    T --> O[ollama on the runner<br/>nomic-embed-text]
+    O --> L[pipelines-watch load<br/>rebuild Chroma]
+    L --> K[podman build Containerfile.knowledge]
+    A --> R1[(ghcr.io/owner/gitlab-pipelines-watch)]
+    K --> R2[(ghcr.io/owner/vtk-pipelines-knowledge)]
+    R2 -- image mount at /kb --> RUN[App container]
+    R1 --> RUN
+    RUN -- embeds queries --> OL[ollama host<br/>same embedding model]
+```
+
+The corpus is data, not code, so it ships in its own image and can be refreshed
+without rebuilding the app. Only the markdown entries are committed; Chroma is
+rebuilt in CI so the database always matches the embedding model, and no binary
+file churns in git. The app image never contains the corpus.
 
 ## Scaling model
 
@@ -163,8 +186,8 @@ flowchart LR
 |---|---|---|
 | Work distribution | `asyncio` tasks bounded by `concurrency` | Detector enqueues one task per job; workers pull from Redis |
 | GitLab protection | In-process `AsyncLimiter` (`gitlab_rps`) | Same limit, shared across workers via Redis |
-| Vector store | Chroma, persisted to `data/chroma` | Another langchain `VectorStore` (pgvector); only `Corpus.__init__` changes |
-| State | SQLite `data/state.db` | Postgres, same schema |
+| Vector store | Chroma, persisted to `knowledge/chroma` | Another langchain `VectorStore` (pgvector); only `Corpus.__init__` changes |
+| State | SQLite `data/state.db` (`PW_STATE_DIR`) | Postgres, same schema |
 | Duplicate work | `decisions` primary key (project, job_id) | Same key, enforced by the shared database |
 
 The detector is stateless: it only reads Prometheus and the `decisions` table,
@@ -182,6 +205,8 @@ All settings are `PW_*` environment variables, defined in `config.py`:
 | `PW_LLM_MODEL` | `anthropic:claude-sonnet-5-5` | Classifier, `provider:model` for `init_chat_model` |
 | `PW_EXTRACT_MODEL` | `anthropic:claude-haiku-5-5` | Snippet and platform extraction |
 | `PW_EMBEDDING_MODEL` | `ollama:nomic-embed-text` | `provider:model` for `init_embeddings` |
+| `PW_KNOWLEDGE_DIR` | `knowledge` | Entries and Chroma corpus (shipped as an image) |
+| `PW_STATE_DIR` | `data` | Watcher decision log (SQLite), never shipped |
 | `PW_CONCURRENCY` | 8 | In-flight jobs |
 | `PW_GITLAB_RPS` | 5 | GitLab requests per second |
 | `PW_MAX_RETRIES_PER_JOB` | 2 | Per (pipeline, job name) |
