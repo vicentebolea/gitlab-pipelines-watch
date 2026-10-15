@@ -3,7 +3,7 @@ import logging
 
 from prometheus_client import Counter, start_http_server
 
-from . import prom
+from . import manifest, prom
 from .classifier import build_chain, format_examples
 from .corpus import Corpus, State
 from .extract import build_extractor, scrub, terminal_errors
@@ -17,6 +17,7 @@ class Watcher:
     def __init__(self, cfg):
         self.cfg = cfg
         self.gl = GitLab(cfg.gitlab_url, cfg.gitlab_token, cfg.gitlab_rps)
+        log.info("knowledge: %s", manifest.check(cfg.knowledge_dir, cfg.embedding_model))
         self.corpus = Corpus(cfg.knowledge_dir, cfg.embedding_model)
         self.state = State(cfg.state_dir)
         self.chain = build_chain(cfg.llm_model)

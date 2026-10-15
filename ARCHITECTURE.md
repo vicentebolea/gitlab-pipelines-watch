@@ -4,7 +4,8 @@ pipelines-watch detects failed GitLab CI jobs through Prometheus and retries the
 ones an LLM judges transient, using a corpus of past failures (with their
 observed outcomes) as retrieval context.
 
-It consolidates two earlier pieces of work:
+It is the online half of a two-repo project (the offline half, which builds the
+corpus, is `vtk-pipelines-knowledge`). It consolidates two earlier pieces of work:
 
 - `gitlab-pipelines-babysitter`: retry logic and a zero-shot LLM prompt.
 - `rigel-deploy`: the Prometheus server (on `rigel`) that scrapes GitLab.
@@ -96,71 +97,67 @@ A job is retried only when the decision is `retry`, confidence is at least
 `min_confidence`, and the retry count for its (pipeline, job name) is below
 `max_retries_per_job`.
 
-## Corpus lifecycle
+## The corpus is built elsewhere
 
-Corpus building is offline, in two stages, and separate from the watcher. The
-watcher only reads the corpus. Entries are markdown files on disk first, so the
-extraction strategy can change and be reviewed before anything is embedded.
+Corpus building (backfill from GitLab history, LLM extraction into markdown
+entries, embedding into Chroma, retrieval-quality tests) lives in the separate
+repo `vtk-pipelines-knowledge`, because its lifecycle is different: it is
+offline, experimental, token-hungry, and its output is data. See its
+`ARCHITECTURE.md` for the stages. This repo only reads the result.
+
+The watcher uses these library modules, which that repo also imports so both
+sides agree on the format:
+
+| Module | Used by the watcher to | Used by the builder to |
+|---|---|---|
+| `extract.py` | turn a new failure into a snippet, platform and error type | do the same for historical failures |
+| `entries.py` | (not needed at runtime) | write and parse entry markdown files |
+| `corpus.py` | search the Chroma database | create and fill it |
+| `manifest.py` | refuse an incompatible corpus at startup | stamp the corpus it built |
 
 ```mermaid
-flowchart TD
-    subgraph S1[Stage 1: pipelines-watch backfill]
-        H[Recent pipelines<br/>jobs with include_retried] --> G[Group attempts by job name]
-        G --> O1{Later attempt exists?}
-        O1 -- passed --> R1[retry_passed]
-        O1 -- failed --> R2[retry_failed]
-        O1 -- none --> X[Skipped]
-        R1 --> HINT[Pick last error lines<br/>before Job failed]
-        R2 --> HINT
-        HINT --> EX[LLM: snippet, platform, error type]
-        EX --> SC[Scrub timestamps, tokens, ids]
-        SC --> MD[(knowledge/entries/project/job_id.md)]
+flowchart LR
+    subgraph KR[vtk-pipelines-knowledge repo]
+        B[backfill, load, quality tests] --> KI[(knowledge image<br/>entries, chroma, manifest.json)]
     end
-
-    subgraph S2[Stage 2: pipelines-watch load]
-        MD --> EMB[Embed snippet only<br/>local ollama]
-        EMB --> V[(Chroma: snippet vector,<br/>full markdown in metadata)]
+    subgraph AR[this repo]
+        LIB[extract, entries, corpus, manifest]
+        W[watcher]
     end
-
-    subgraph ON[Online: pipelines-watch watch]
-        V -. read-only similarity search .-> RET[Matching markdown files<br/>as examples for the classifier]
-    end
+    LIB -. pinned git dependency .-> B
+    KI -- image mount at /kb --> W
+    W -- manifest.check at startup --> KI
 ```
 
-Labels come only from what a retry actually did: `retry_passed` is strong
-evidence of a transient failure and `retry_failed` of a real bug. Failures that
-were never retried are skipped. The platform is part of every entry because the
-same error can be transient on one platform and a bug on another.
+### The contract
 
-The root-cause line is chosen by code (the last `ERROR` or `FATAL` lines before
-the runner's "Job failed"), then passed to the LLM as a hint, because asking the
-LLM to rank several errors gave inconsistent labels.
+`manifest.json` in the knowledge image records the embedding model and the
+`EXTRACTION_VERSION` the corpus was built with. At startup the watcher compares
+them with its own configuration and refuses to run on a mismatch, because
+retrieval would silently degrade: vectors from two embedding models cannot be
+compared, and a changed extraction prompt makes new failures look different
+from the stored ones.
 
-The watcher records its own decisions in SQLite, but does not feed them back
-into the corpus; they can be mined later by an offline job.
+Release flow when extraction changes: edit the code here, bump
+`EXTRACTION_VERSION`, tag a release; in the knowledge repo, bump the pinned
+version, rebuild, publish; then deploy the new app image together with the new
+knowledge image.
 
 ## Delivery
 
 ```mermaid
 flowchart LR
-    DEV[Local: backfill, review] -- commit entries --> GIT[(GitHub repo<br/>knowledge/entries)]
-    GIT --> CI[GitHub Actions]
+    GIT[(GitHub repo)] --> CI[GitHub Actions]
     CI --> T[ruff and pytest]
     T --> A[podman build Containerfile]
-    T --> O[ollama on the runner<br/>nomic-embed-text]
-    O --> L[pipelines-watch load<br/>rebuild Chroma]
-    L --> K[podman build Containerfile.knowledge]
     A --> R1[(ghcr.io/owner/gitlab-pipelines-watch)]
-    K --> R2[(ghcr.io/owner/vtk-pipelines-knowledge)]
-    R2 -- image mount at /kb --> RUN[App container]
+    R2[(ghcr.io/owner/vtk-pipelines-knowledge)] -- image mount at /kb --> RUN[App container]
     R1 --> RUN
     RUN -- embeds queries --> OL[ollama host<br/>same embedding model]
 ```
 
-The corpus is data, not code, so it ships in its own image and can be refreshed
-without rebuilding the app. Only the markdown entries are committed; Chroma is
-rebuilt in CI so the database always matches the embedding model, and no binary
-file churns in git. The app image never contains the corpus.
+The corpus ships in its own image, built by the knowledge repo, so it can be
+refreshed without rebuilding the app. The app image never contains the corpus.
 
 ## Scaling model
 
@@ -205,7 +202,7 @@ All settings are `PW_*` environment variables, defined in `config.py`:
 | `PW_LLM_MODEL` | `anthropic:claude-sonnet-5-5` | Classifier, `provider:model` for `init_chat_model` |
 | `PW_EXTRACT_MODEL` | `anthropic:claude-haiku-5-5` | Snippet and platform extraction |
 | `PW_EMBEDDING_MODEL` | `ollama:nomic-embed-text` | `provider:model` for `init_embeddings` |
-| `PW_KNOWLEDGE_DIR` | `knowledge` | Entries and Chroma corpus (shipped as an image) |
+| `PW_KNOWLEDGE_DIR` | `knowledge` | Where the corpus (from the knowledge image) is mounted |
 | `PW_STATE_DIR` | `data` | Watcher decision log (SQLite), never shipped |
 | `PW_CONCURRENCY` | 8 | In-flight jobs |
 | `PW_GITLAB_RPS` | 5 | GitLab requests per second |
@@ -223,10 +220,10 @@ All settings are `PW_*` environment variables, defined in `config.py`:
 | `classifier.py` | langchain prompt and structured `Decision` output |
 | `corpus.py` | `Corpus` (vector store, read-only for the watcher) and `State` (SQLite decisions) |
 | `watcher.py` | Poll loop and per-job decision flow |
-| `backfill.py` | Stage 1 (entry files from GitLab history) and stage 2 (`load` into Chroma) |
 | `entries.py` | `Entry` model and its markdown files |
 | `extract.py` | LLM extraction of snippet, platform and error type; scrubbing |
-| `cli.py` | `watch`, `backfill` and `load` commands |
+| `manifest.py` | Writes (builder) and checks (watcher) the corpus manifest |
+| `cli.py` | The `watch` command |
 
 ## Observability
 

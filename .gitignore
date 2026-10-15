@@ -6,4 +6,3 @@ __pycache__/
 .env
 .claude/
 .ruff_cache/
-knowledge/chroma/
