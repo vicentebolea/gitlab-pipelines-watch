@@ -52,3 +52,23 @@ jobs:
             podman tag "$IMAGE:${{ github.sha }}" "$IMAGE:${{ github.ref_name }}"
             podman push "$IMAGE:${{ github.ref_name }}"
           fi
+
+  # Drift alarm: the latest published knowledge must fit this build (same embedding
+  # model and extraction version). Red after a deliberate EXTRACTION_VERSION bump,
+  # until the knowledge repo rebuilds and publishes.
+  knowledge-compat:
+    needs: app-image
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check the published knowledge against this build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | podman login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+          podman run --rm \
+            --mount type=image,source=ghcr.io/${{ github.repository_owner }}/vtk-pipelines-knowledge:latest,destination=/kb,rw=true \
+            "ghcr.io/${{ github.repository }}:${{ github.sha }}" check

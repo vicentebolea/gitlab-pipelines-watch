@@ -101,47 +101,68 @@ degraded retrieval.
 
 CI builds the app image with podman and pushes it to
 `ghcr.io/vicentebolea/gitlab-pipelines-watch` (tags: commit sha, `latest`, and
-`v*` for version tags). The image does not contain the corpus. Mount it from
-the knowledge image:
+`v*` for version tags). The image does not contain the corpus: it expects the
+knowledge image from `vtk-pipelines-knowledge` mounted at `/kb`.
 
 ```sh
 podman run -d --env-file .env \
   --mount type=image,source=ghcr.io/vicentebolea/vtk-pipelines-knowledge,destination=/kb,rw=true \
-  -e PW_KNOWLEDGE_DIR=/kb/knowledge \
   -v pw-state:/state -p 9101:9101 \
   ghcr.io/vicentebolea/gitlab-pipelines-watch
 ```
 
-The image root is mounted at `/kb`, so the corpus is under `/kb/knowledge`.
-`rw=true` is needed because Chroma writes to its database file, the changes are
-discarded with the container. The packages are private (the repos are), log in
-with `podman login ghcr.io` using a token with `read:packages`. A `scratch`
-data image cannot be used with `--volumes-from`, the volume stays empty.
+An image mount shows the image root at `/kb`, so the corpus is
+`/kb/knowledge`, which is the image's default `PW_KNOWLEDGE_DIR`. `rw=true` is
+needed because Chroma writes to its database file, the changes are discarded
+with the container. A `scratch` data image cannot be used with
+`--volumes-from`, the volume stays empty.
 
-### Run it as a service (systemd)
-
-`/etc/systemd/system/pipelines-watch.service`:
-
-```ini
-[Unit]
-Description=pipelines-watch
-After=network-online.target
-
-[Service]
-WorkingDirectory=/opt/pipelines-watch
-EnvironmentFile=/opt/pipelines-watch/.env
-ExecStart=/opt/pipelines-watch/.venv/bin/pipelines-watch watch
-Restart=always
-User=pipelines-watch
-
-[Install]
-WantedBy=multi-user.target
-```
+Check that a knowledge image fits this version before deploying:
 
 ```sh
-sudo systemctl enable --now pipelines-watch
-journalctl -u pipelines-watch -f
+podman run --rm --mount type=image,source=ghcr.io/vicentebolea/vtk-pipelines-knowledge,destination=/kb,rw=true \
+  ghcr.io/vicentebolea/gitlab-pipelines-watch check
 ```
+
+CI runs the same check after every push to `main` against the latest published
+knowledge image, so a version bump that makes the corpus stale turns the
+`knowledge-compat` job red until the knowledge is rebuilt.
+
+### Run it as a service (podman Quadlet)
+
+`deploy/pipelines-watch.container` runs the app under systemd with the
+knowledge image mounted, and `AutoUpdate=registry` lets
+`podman auto-update` pick up new images.
+
+```sh
+mkdir -p ~/.config/containers/systemd ~/.config/pipelines-watch
+cp deploy/pipelines-watch.container ~/.config/containers/systemd/
+cp deploy/pipelines-watch.env.example ~/.config/pipelines-watch/env   # then edit it
+systemctl --user daemon-reload
+systemctl --user start pipelines-watch
+journalctl --user -u pipelines-watch -f
+```
+
+Start with `PW_DRY_RUN=true` in the env file. The container reaches an ollama
+on the host through `OLLAMA_HOST=http://host.containers.internal:11434`, which
+needs ollama to listen on more than localhost (`OLLAMA_HOST=0.0.0.0`).
+
+## Diagnose a log
+
+Ask whether a retry is a good idea for a job log, without GitLab or
+Prometheus. It needs the knowledge, the embedding server and the Anthropic key:
+
+```sh
+pipelines-watch diagnose job.log --job windows-vs2022-mpi-python-qt:build
+some-command | pipelines-watch diagnose --job linux-gcc:build        # stdin
+pipelines-watch diagnose --text "fatal: index file corrupt"
+```
+
+It prints the extracted platform, error type and snippet, a verdict (`RETRY` or
+`DO NOT RETRY`, using the same confidence threshold as the watcher), the
+reason, and the similar past failures it based the verdict on. The verdict
+comes from an LLM and can vary between runs: read the listed past failures,
+especially when they disagree.
 
 ## Tests
 

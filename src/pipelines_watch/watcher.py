@@ -3,11 +3,10 @@ import logging
 
 from prometheus_client import Counter, start_http_server
 
-from . import manifest, prom
-from .classifier import build_chain, format_examples
-from .corpus import Corpus, State
-from .extract import build_extractor, scrub, terminal_errors
+from . import prom
+from .corpus import State
 from .gitlab import GitLab
+from .judge import Judge
 
 log = logging.getLogger(__name__)
 DECISIONS = Counter("pw_decisions_total", "Decisions taken", ["result"])
@@ -17,21 +16,9 @@ class Watcher:
     def __init__(self, cfg):
         self.cfg = cfg
         self.gl = GitLab(cfg.gitlab_url, cfg.gitlab_token, cfg.gitlab_rps)
-        log.info("knowledge: %s", manifest.check(cfg.knowledge_dir, cfg.embedding_model))
-        self.corpus = Corpus(cfg.knowledge_dir, cfg.embedding_model)
+        self.judge = Judge(cfg)
         self.state = State(cfg.state_dir)
-        self.chain = build_chain(cfg.llm_model)
-        self.extractor = build_extractor(cfg.extract_model)
         self.sem = asyncio.Semaphore(cfg.concurrency)
-
-    async def judge(self, job, name, text):
-        """Return (retry, reason) for a script_failure job."""
-        x = await self.extractor.ainvoke({"job_name": name, "runner": "", "hint": terminal_errors(text), "log": text})
-        snippet = scrub(x.snippet)
-        docs = await asyncio.to_thread(self.corpus.similar, snippet, self.cfg.similar_k)
-        d = await self.chain.ainvoke({"examples": format_examples(docs), "job_name": name,
-                                      "platform": x.platform, "error_type": x.error_type, "log": snippet})
-        return d.retry and d.confidence >= self.cfg.min_confidence, d.reason
 
     async def handle(self, project, job_id, name, reason):
         async with self.sem:
@@ -42,7 +29,8 @@ class Watcher:
                 text = None
                 if reason == "script_failure":
                     text = await self.gl.log_tail(job)
-                    retry, why = await self.judge(job, name, text)
+                    a = await self.judge.assess(name, text)
+                    retry, why = a.retry, a.reason
                 else:
                     retry, why = True, f"infrastructure failure: {reason}"
                 if self.state.retries(project, pipeline_id, name) >= self.cfg.max_retries_per_job:

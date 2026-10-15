@@ -23,7 +23,7 @@ class Decision(BaseModel):
 
 
 def build_chain(llm_model):
-    return PROMPT | init_chat_model(llm_model).with_structured_output(Decision)
+    return PROMPT | init_chat_model(llm_model).with_structured_output(Decision, method="json_schema")
 
 
 def format_examples(docs):

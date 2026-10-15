@@ -34,7 +34,7 @@ class Extraction(BaseModel):
 
 
 def build_extractor(model):
-    return PROMPT | init_chat_model(model).with_structured_output(Extraction)
+    return PROMPT | init_chat_model(model).with_structured_output(Extraction, method="json_schema")
 
 
 _NOISE = [

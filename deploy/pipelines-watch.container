@@ -1,0 +1,23 @@
+# Podman Quadlet unit: runs the watcher with the knowledge mounted from its own image.
+# Install (rootless): copy to ~/.config/containers/systemd/, put the settings in
+# ~/.config/pipelines-watch/env (see pipelines-watch.env.example), then:
+#   systemctl --user daemon-reload && systemctl --user start pipelines-watch
+[Unit]
+Description=pipelines-watch
+After=network-online.target
+
+[Container]
+Image=ghcr.io/vicentebolea/gitlab-pipelines-watch:latest
+EnvironmentFile=%h/.config/pipelines-watch/env
+# The corpus: the image root is mounted at /kb, the app reads /kb/knowledge.
+# rw is needed because Chroma writes to its database file; changes are discarded.
+Mount=type=image,source=ghcr.io/vicentebolea/vtk-pipelines-knowledge:latest,destination=/kb,rw=true
+Volume=pipelines-watch-state:/state
+PublishPort=9101:9101
+AutoUpdate=registry
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

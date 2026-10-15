@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PW_", env_file=".env", extra="ignore")
 
     gitlab_url: str = "https://gitlab.kitware.com"
-    gitlab_token: str
+    gitlab_token: str = ""  # only `watch` needs it
     prometheus_url: str = "http://rigel:9090"
 
     # LLM and embeddings, resolved by langchain init_chat_model / init_embeddings.
