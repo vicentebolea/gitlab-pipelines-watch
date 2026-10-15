@@ -5,9 +5,9 @@ from langchain.chat_models import init_chat_model
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-# Bump when PROMPT, Extraction, scrub or terminal_errors change: knowledge built with another
+# Bump when PROMPT, Extraction, scrub, terminal_errors or the entry format change: knowledge built with another
 # version is not comparable with what the watcher extracts, and the watcher refuses to start on it.
-EXTRACTION_VERSION = "1"
+EXTRACTION_VERSION = "2"
 
 PROMPT = ChatPromptTemplate.from_messages([
     ("system",

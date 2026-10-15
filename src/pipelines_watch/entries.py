@@ -20,18 +20,22 @@ class Entry(BaseModel):
     error_type: str
     snippet: str
     outcome: str  # retry_passed | retry_failed
+    similar: int | None = None  # retries of the same error in the corpus, this one included
+    success_rate: float | None = None  # share of those retries that passed
 
     @property
     def id(self):
         return f"{self.project}:{self.job_id}"
 
     def to_markdown(self):
-        meta = self.model_dump(exclude={"snippet"})
+        meta = self.model_dump(exclude={"snippet"}, exclude_none=True)
+        rate = (f" Across {self.similar} retries of this error, {self.success_rate:.0%} passed."
+                if self.success_rate is not None else "")
         return (
             f"---\n{yaml.safe_dump(meta, sort_keys=False)}---\n\n"
             f"# {self.error_type} on {self.platform}: {self.outcome}\n\n"
             f"Job `{self.job_name}` ({self.project}). A retry of this job on this platform "
-            f"{'passed' if self.outcome == 'retry_passed' else 'failed again'}.\n\n"
+            f"{'passed' if self.outcome == 'retry_passed' else 'failed again'}.{rate}\n\n"
             f"{FENCE}text\n{self.snippet}\n{FENCE}\n"
         )
 
