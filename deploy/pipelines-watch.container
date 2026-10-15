@@ -1,10 +1,14 @@
 # Podman Quadlet unit: runs the watcher with the knowledge mounted from its own image.
 # Install (rootless): copy to ~/.config/containers/systemd/, put the settings in
 # ~/.config/pipelines-watch/env (see pipelines-watch.env.example), then:
+#   (also copy knowledge.image next to it)
 #   systemctl --user daemon-reload && systemctl --user start pipelines-watch
 [Unit]
 Description=pipelines-watch
 After=network-online.target
+# podman does not pull the source of an image mount, knowledge.image does
+Requires=knowledge-image.service
+After=knowledge-image.service
 
 [Container]
 Image=ghcr.io/vicentebolea/gitlab-pipelines-watch:latest

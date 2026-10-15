@@ -1,0 +1,6 @@
+# Pulls the knowledge image that pipelines-watch.container mounts.
+[Image]
+Image=ghcr.io/vicentebolea/vtk-pipelines-knowledge:latest
+
+[Install]
+WantedBy=default.target

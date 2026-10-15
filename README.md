@@ -117,9 +117,11 @@ needed because Chroma writes to its database file, the changes are discarded
 with the container. A `scratch` data image cannot be used with
 `--volumes-from`, the volume stays empty.
 
-Check that a knowledge image fits this version before deploying:
+Check that a knowledge image fits this version before deploying (pull it first,
+`podman run` does not pull the source of an image mount):
 
 ```sh
+podman pull ghcr.io/vicentebolea/vtk-pipelines-knowledge
 podman run --rm --mount type=image,source=ghcr.io/vicentebolea/vtk-pipelines-knowledge,destination=/kb,rw=true \
   ghcr.io/vicentebolea/gitlab-pipelines-watch check
 ```
@@ -131,12 +133,13 @@ knowledge image, so a version bump that makes the corpus stale turns the
 ### Run it as a service (podman Quadlet)
 
 `deploy/pipelines-watch.container` runs the app under systemd with the
-knowledge image mounted, and `AutoUpdate=registry` lets
-`podman auto-update` pick up new images.
+knowledge image mounted, and `deploy/knowledge.image` pulls that image first
+(`podman run` does not pull the source of an image mount). `AutoUpdate=registry`
+lets `podman auto-update` pick up a new app image.
 
 ```sh
 mkdir -p ~/.config/containers/systemd ~/.config/pipelines-watch
-cp deploy/pipelines-watch.container ~/.config/containers/systemd/
+cp deploy/pipelines-watch.container deploy/knowledge.image ~/.config/containers/systemd/
 cp deploy/pipelines-watch.env.example ~/.config/pipelines-watch/env   # then edit it
 systemctl --user daemon-reload
 systemctl --user start pipelines-watch

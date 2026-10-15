@@ -69,6 +69,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "$GH_TOKEN" | podman login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+          # podman run does not pull the source of an image mount
+          knowledge=ghcr.io/${{ github.repository_owner }}/vtk-pipelines-knowledge:latest
+          podman pull "$knowledge"
           podman run --rm \
-            --mount type=image,source=ghcr.io/${{ github.repository_owner }}/vtk-pipelines-knowledge:latest,destination=/kb,rw=true \
+            --mount "type=image,source=$knowledge,destination=/kb,rw=true" \
             "ghcr.io/${{ github.repository }}:${{ github.sha }}" check
