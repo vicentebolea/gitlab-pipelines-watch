@@ -198,6 +198,19 @@ journalctl -u pipelines-watch -f
 
 After building a new corpus, restart the service so it picks it up.
 
+## Tests
+
+```sh
+.venv/bin/pytest                # fast tests, fake embeddings, no services
+.venv/bin/pytest -m embedding   # retrieval quality on knowledge/ (needs ollama)
+```
+
+The second set checks, on the real corpus with the real embedding model, that
+every entry is indexed, that an entry's nearest neighbours mostly share its
+error type (leave-one-out, well above chance), and that known errors retrieve
+their category. CI runs it after rebuilding Chroma and before publishing the
+knowledge image, so a corpus with broken retrieval is not published.
+
 ## Container images (CI)
 
 CI (`.github/workflows/ci.yml`) builds two images with podman and pushes them

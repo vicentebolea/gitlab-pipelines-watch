@@ -23,6 +23,10 @@ dev = ["pytest"]
 [project.scripts]
 pipelines-watch = "pipelines_watch.cli:main"
 
+[tool.pytest.ini_options]
+markers = ["embedding: needs the real corpus and embedding model (run with -m embedding)"]
+addopts = "-m 'not embedding'"
+
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
