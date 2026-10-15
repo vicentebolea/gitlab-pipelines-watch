@@ -99,8 +99,9 @@ A job is retried only when the decision is `retry`, confidence is at least
 
 ## The corpus is built elsewhere
 
-Corpus building (backfill from GitLab history, LLM extraction into markdown
-entries, embedding into Chroma, retrieval-quality tests) lives in the separate
+Corpus building (scrape from GitLab history, LLM extraction into markdown
+entries with a per-error success rate, embedding into Chroma, retrieval-quality
+tests) lives in the separate
 repo `vtk-pipelines-knowledge`, because its lifecycle is different: it is
 offline, experimental, token-hungry, and its output is data. See its
 `ARCHITECTURE.md` for the stages. This repo only reads the result.
@@ -111,14 +112,14 @@ sides agree on the format:
 | Module | Used by the watcher to | Used by the builder to |
 |---|---|---|
 | `extract.py` | turn a new failure into a snippet, platform and error type | do the same for historical failures |
-| `entries.py` | (not needed at runtime) | write and parse entry markdown files |
+| `entries.py` | (not needed at runtime) | write and parse entry markdown files, including `similar` and `success_rate` |
 | `corpus.py` | search the Chroma database | create and fill it |
 | `manifest.py` | refuse an incompatible corpus at startup | stamp the corpus it built |
 
 ```mermaid
 flowchart LR
     subgraph KR[vtk-pipelines-knowledge repo]
-        B[backfill, load, quality tests] --> KI[(knowledge image<br/>entries, chroma, manifest.json)]
+        B[scrape, convert, load, quality tests] --> KI[(knowledge image<br/>entries, chroma, manifest.json)]
     end
     subgraph AR[this repo]
         LIB[extract, entries, corpus, manifest]
@@ -138,7 +139,7 @@ retrieval would silently degrade: vectors from two embedding models cannot be
 compared, and a changed extraction prompt makes new failures look different
 from the stored ones.
 
-Release flow when extraction changes: edit the code here, bump
+Release flow when extraction or the entry format changes: edit the code here, bump
 `EXTRACTION_VERSION`, tag a release; in the knowledge repo, bump the pinned
 version, rebuild, publish; then deploy the new app image together with the new
 knowledge image.
